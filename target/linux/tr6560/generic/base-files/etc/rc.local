@@ -3,7 +3,33 @@
 
 cs_cli /home/cli/api/ecs/eth/power_up_all
 
-# CPU frequency governor
+# Reload tri_cpufreq from the overlay copy in /lib/modules. procd loads /etc/modules-boot.d
+# from the ROM squashfs before the overlay is mounted, so the boot-time driver is always the
+# stock one, which printk()s ~20 lines on every frequency change and floods logread.
+# The overlay copy has those printk calls NOP-ed (build-output/patch-tri-cpufreq-printk.py).
+rmmod tri_cpufreq 2>/dev/null
+insmod /lib/modules/5.10.138/tri_cpufreq.ko 2>/dev/null
+
+# CPU frequency governor - ondemand for better throughput
 echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+echo ondemand > /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor
+
+# Move xhci (USB) interrupt to CPU0, balance with RPS
+echo 1 > /proc/irq/209/smp_affinity
+
+# Turn off all LEDs
+echo none > /sys/class/leds/tri:green:power/trigger
+echo 0 > /sys/class/leds/tri:green:power/brightness
+echo none > /sys/class/leds/tri:red:power/trigger
+echo 255 > /sys/class/leds/tri:red:power/brightness
+echo none > /sys/class/leds/tri:green:wlan2g/trigger
+echo 255 > /sys/class/leds/tri:green:wlan2g/brightness
+echo none > /sys/class/leds/tri:green:wlan5g/trigger
+echo 255 > /sys/class/leds/tri:green:wlan5g/brightness
+
+# Unbind unused FM350-GL USB serial ports (keep 1.6 = ttyUSB4 for AT)
+for intf in 2-1:1.2 2-1:1.3 2-1:1.4 2-1:1.5 2-1:1.7 2-1:1.8 2-1:1.9; do
+    echo -n $intf > /sys/bus/usb/drivers/option/unbind 2>/dev/null
+done
 
 exit 0

@@ -1,0 +1,24 @@
+#!/bin/sh
+[ "$ACTION" = add ] || exit
+
+# Always re-assert eth1 (RNDIS 5G modem) -> RPS cpu1 only, GRO batching.
+# 20-smp-packet-steering re-processes ALL interfaces on EVERY netdev add event
+# and would otherwise reset eth1 to rps_cpus=3. This runs after it (21 > 20) and
+# re-pins eth1 unconditionally, not only when eth1 is the triggering interface.
+# cpu0 handles the xhci hardirq + usbnet RX poll; keeping the forward/stack work
+# on cpu1 gave ~290 -> ~327 Mbps. See throughput tuning notes.
+if [ -e /sys/class/net/eth1/queues/rx-0/rps_cpus ]; then
+    echo 2 > /sys/class/net/eth1/queues/rx-0/rps_cpus
+    echo 20000 > /sys/class/net/eth1/gro_flush_timeout
+fi
+
+# WiFi front-haul interfaces: spread RPS across both cores (unchanged).
+case "$INTERFACE" in
+    wlan0-ap-fh|wlan1-ap-fh)
+        echo 3 > /sys/class/net/$INTERFACE/queues/rx-0/rps_cpus
+        logger "rps-tuning: $INTERFACE RPS applied"
+        ;;
+    eth1)
+        logger "rps-tuning: eth1 RPS(cpu1) and GRO applied"
+        ;;
+esac
