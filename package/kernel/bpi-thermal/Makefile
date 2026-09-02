@@ -25,6 +25,7 @@ define KernelPackage/bpi-thermal
   TITLE:=TR6560 PID fan controller (prebuilt v2.0)
   FILES:=$(PKG_BUILD_DIR)/bpi_thermal.ko
   AUTOLOAD:=$(call AutoLoad,95,bpi_thermal)
+  KCONFIG:=CONFIG_HWMON=y
 endef
 
 define KernelPackage/bpi-thermal/description
