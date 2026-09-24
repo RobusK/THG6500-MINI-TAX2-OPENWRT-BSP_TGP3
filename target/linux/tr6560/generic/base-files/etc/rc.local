@@ -10,7 +10,12 @@ cs_cli /home/cli/api/ecs/eth/power_up_all
 rmmod tri_cpufreq 2>/dev/null
 insmod /lib/modules/5.10.138/tri_cpufreq.ko 2>/dev/null
 
-# CPU frequency governor - ondemand for better throughput
+# CPU frequency governor - ondemand. tri_cpufreq "scales voltage" through the
+# GPIO8 PWM (CPU_VG), but on this board the CPU_VG->DVDD09 feedback network
+# (RP25/RP26/CP25) is not fitted: the core rail is fixed at 0.943 V. So the
+# driver's voltage_trans_latency must be 0: the default 10 spins 20 ms of udelay
+# on every clock raise, waiting for a voltage ramp that never happens.
+echo 0 > /sys/devices/system/cpu/cpu0/cpufreq/tri_cpufreq_voltage_trans_latency
 echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
 echo ondemand > /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor
 
