@@ -62,7 +62,9 @@ setup_interface () {
 
 	config_load network
 	config_get reqaddress wan6 reqaddress
-	if [ "$reqaddress" = "none" ]; then
+	# SLAAC (RA) addresses: vendor merges them only for wan6 reqaddress=none;
+	# also use them when DHCPv6 gave no address (SLAAC-only uplinks, e.g. cellular).
+	if [ "$reqaddress" = "none" ] || [ -z "$ADDRESSES" ]; then
 		# Merge addresses
 		for entry in $RA_ADDRESSES; do
 			local duplicate=0
