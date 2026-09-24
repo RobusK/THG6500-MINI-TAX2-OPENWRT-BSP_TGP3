@@ -1,0 +1,61 @@
+#!/bin/sh
+# While a 464xlat CLAT is up (an IPv6-only uplink with NAT64), tell the LAN so
+# that clients with their own CLAT (macOS 13+, iOS 16+, Android) translate
+# themselves and skip IPv4:
+#  - PREF64 (RFC 8781): the NAT64 prefix in odhcpd's router advertisements
+#  - DHCPv4 option 108 "IPv6-Only Preferred" (RFC 8925) from dnsmasq, with
+#    V6ONLY_WAIT 300 s (0x12c, the RFC minimum): such clients ask for IPv4
+#    again within 5 minutes after it is withdrawn.
+# Both are withdrawn once the uplink has native IPv4 again (e.g. an IPv4 APN).
+# While neither is the case (uplink down, early boot) the last state is kept.
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifdown ] || [ "$ACTION" = ifupdate ] || exit 0
+
+OPT108=/tmp/dnsmasq.d/ipv6-only-preferred.conf
+dump=$(ubus call network.interface dump)
+clat=$(echo "$dump" | jsonfilter -e '@.interface[@.proto="464xlat" && @.up=true].l3_device' | head -n 1)
+native4=$(echo "$dump" | jsonfilter -e '@.interface[@.up=true && @.proto!="464xlat"].route[@.target="0.0.0.0" && @.mask=0].target')
+
+if [ -n "$clat" ]; then
+	# nat46 "remote.v6 64:ff9b::c000:aa/96" (464xlatcfg: the ipv4only.arpa
+	# AAAA, /96) -> the prefix with the host bits cleared
+	pref64=$(awk -v dev="$clat" '$1 == "config" && $2 == dev {
+		for (i = 3; i < NF; i++) if ($i == "remote.v6") split($(i + 1), p, "/")
+		a = p[1]; nl = nr = 0
+		if (c = index(a, "::")) {
+			l = substr(a, 1, c - 1); r = substr(a, c + 2)
+			if (l != "") nl = split(l, L, ":")
+			if (r != "") nr = split(r, R, ":")
+			for (i = 1; i <= 8; i++) g[i] = 0
+			for (i = 1; i <= nl; i++) g[i] = L[i]
+			for (i = 1; i <= nr; i++) g[8 - nr + i] = R[i]
+		} else split(a, g, ":")
+		if (p[2] == 96) print g[1] ":" g[2] ":" g[3] ":" g[4] ":" g[5] ":" g[6] "::/96"
+	}' /proc/net/nat46/control)
+	want108=1
+elif [ -n "$native4" ]; then
+	pref64= want108=0
+else
+	exit 0
+fi
+
+if [ "$want108" = 1 ] && [ ! -e $OPT108 ]; then
+	mkdir -p /tmp/dnsmasq.d
+	echo "dhcp-option=tag:lan,108,00:00:01:2c" > $OPT108
+	/etc/init.d/dnsmasq restart
+	logger -t nat64-clients "$clat: DHCPv4 option 108 on"
+elif [ "$want108" = 0 ] && [ -e $OPT108 ]; then
+	rm -f $OPT108
+	/etc/init.d/dnsmasq restart
+	logger -t nat64-clients "native IPv4: DHCPv4 option 108 off"
+fi
+
+if [ "$(uci -q get dhcp.lan.ra_pref64)" != "$pref64" ]; then
+	if [ -n "$pref64" ]; then
+		uci set dhcp.lan.ra_pref64="$pref64"
+	else
+		uci -q delete dhcp.lan.ra_pref64
+	fi
+	uci commit dhcp
+	/etc/init.d/odhcpd reload
+	logger -t nat64-clients "PREF64 ${pref64:-off}"
+fi
