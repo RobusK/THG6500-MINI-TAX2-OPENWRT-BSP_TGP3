@@ -3,11 +3,13 @@
 
 # RPS on both cores for the WiFi front-haul and the 5G modem netdev (eth1,
 # RNDIS). For eth1 also GRO flush batching and its fw4 flowtable entry, which
-# fw4 itself leaves out (see /etc/fw4-eth1-flowtable.sh). With batched RX
-# (patches 900/901, 8x URBs) spreading eth1's forwarding over both cores measured
-# best: 0.37-0.39 %CPU per forwarded Mbps (2026-09-24).
+# fw4 itself leaves out (see /etc/fw4-eth1-flowtable.sh); likewise for the
+# 464xlat CLAT device of an IPv6-only APN. With batched RX (patches 900/901,
+# 8x URBs) spreading eth1's forwarding over both cores measured best:
+# 0.37-0.39 %CPU per forwarded Mbps (2026-09-24).
 case "$INTERFACE" in
     wlan0-ap-fh|wlan1-ap-fh|eth1) ;;
+    464-*) /etc/fw4-eth1-flowtable.sh "$INTERFACE"; exit 0 ;;
     *) exit 0 ;;
 esac
 echo 3 > /sys/class/net/$INTERFACE/queues/rx-0/rps_cpus

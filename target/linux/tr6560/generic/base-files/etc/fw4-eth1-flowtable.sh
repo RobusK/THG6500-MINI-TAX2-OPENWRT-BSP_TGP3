@@ -1,15 +1,19 @@
 #!/bin/sh
-# Put the 5G modem's netdev into fw4's software flowtable. fw4 takes flowtable
-# devices from each network's physdev; for network wwan (proto xmm) that is the
-# AT tty, so the modem netdev (eth1) is left out and downloads, which arrive on
-# it, never take the fast path.
-# Run by fw4 after every (re)load as a firewall include (no argument: the L3
-# device of network wwan) and by /etc/hotplug.d/net/21-rps-tuning with the
-# newly created netdev. Idempotent.
+# fw4 builds the flowtable from each network's physdev, which leaves out the
+# 5G modem netdev (proto xmm's device is /dev/ttyUSB4) and, on an IPv6-only
+# APN, the 464xlat CLAT device. Add them. The CLAT device must be in it too:
+# with only one side of a translated flow offloaded, conntrack sees half of
+# each TCP connection and the wan zone drops the rest as invalid.
+# Run by the fw4 include (after every reload) and the net hotplug hook.
 . /lib/functions/network.sh
-DEV=$1
-[ -n "$DEV" ] || network_get_device DEV wwan
-[ -n "$DEV" ] && [ -e "/sys/class/net/$DEV" ] || exit 0
+DEVS=$1
+[ -n "$DEVS" ] || {
+	network_get_device DEVS wwan
+	DEVS="$DEVS $(ls /sys/class/net | grep '^464-')"
+}
 FT=$(nft list flowtable inet fw4 ft 2>/dev/null) || exit 0
-case "$FT" in *" $DEV,"*|*" $DEV "*) exit 0 ;; esac
-nft add flowtable inet fw4 ft "{ hook ingress priority 0; devices = { $DEV }; }"
+for DEV in $DEVS; do
+	[ -e "/sys/class/net/$DEV" ] || continue
+	case "$FT" in *" $DEV,"*|*" $DEV "*) continue ;; esac
+	nft add flowtable inet fw4 ft "{ hook ingress priority 0; devices = { \"$DEV\" }; }"
+done
