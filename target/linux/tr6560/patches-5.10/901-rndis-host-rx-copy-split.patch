@@ -1,0 +1,45 @@
+rndis_host: copy batched RX packets instead of cloning them
+
+With RX batching (900) one URB carries ~10 frames. Splitting it with
+skb_clone() leaves every frame sharing the whole URB buffer, so each one is
+"cloned" and the forwarding path (skb_cow in ip_forward / flowtable) does a
+pskb_expand_head: an rx_urb_size allocation plus a copy of up to rx_urb_size
+bytes per packet. Copy each frame but the last into a right-sized skb instead
+(as cdc_ncm does). TR6560 + FM350-GL, forwarded download, 8x URBs:
+0.52-0.62 vs 0.69-0.74 %CPU per Mbps; with the flowtable fix ~0.38.
+
+--- a/drivers/net/usb/rndis_host.c
++++ b/drivers/net/usb/rndis_host.c
+@@ -497,6 +497,9 @@
+ }
+ EXPORT_SYMBOL_GPL(rndis_unbind);
+ 
++/* room for the egress device's link headers, plus IP alignment */
++#define RNDIS_RX_COPY_HEADROOM	(128 + NET_IP_ALIGN)
++
+ /*
+  * DATA -- host must not write zlps
+  */
+@@ -538,12 +541,19 @@
+ 			break;
+ 		}
+ 
+-		/* try to return all the packets in the batch */
+-		skb2 = skb_clone(skb, GFP_ATOMIC);
++		/* Return all the packets in the batch, each but the last copied
++		 * into its own skb. A clone would share the whole rx_urb_size
++		 * buffer, making every packet of the batch (the last one, left
++		 * in skb, too) "cloned"; the forwarding path's skb_cow() then
++		 * reallocates and copies up to rx_urb_size bytes per packet.
++		 * cdc_ncm copies likewise.
++		 */
++		skb2 = netdev_alloc_skb(dev->net, RNDIS_RX_COPY_HEADROOM + data_len);
+ 		if (unlikely(!skb2))
+ 			break;
++		skb_reserve(skb2, RNDIS_RX_COPY_HEADROOM);
++		skb_put_data(skb2, skb->data, data_len);
+ 		skb_pull(skb, msg_len - sizeof *hdr);
+-		skb_trim(skb2, data_len);
+ 
+ 		if (unlikely(dst_mac_fixup))
+ 			usbnet_cdc_zte_rx_fixup(dev, skb2);

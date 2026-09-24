@@ -1,27 +1,29 @@
-rndis_host/usbnet: RX-batching + queue-depth experiment (tunable, default off)
+rndis_host/usbnet: RX batching with a deep queue (default 8x / 8x)
 
-Two module params to test whether RNDIS RX batching can help once queue depth
-is decoupled from buffer size:
+Lets the FM350-GL pack several frames per USB transfer (8x RX URB = ~16 KB, ~10
+frames) while keeping the usbnet RX ring deep; cuts xHCI interrupts ~8x and
+frees CPU0, which was the ~330 Mbps forwarding wall. Needs 901 (copy split),
+else the clones of the shared URB buffer cost more than batching saves.
   rndis_host.rndis_rx_urb_mult  - multiply RX URB / advertised max_transfer_size
                                   (lets the modem batch frames per USB transfer)
   usbnet.rx_qlen_mult           - multiply the SuperSpeed RX queue depth so a
                                   larger buffer still keeps many URBs in flight
                                   (usbnet caps total ring bytes, capped here 2MB)
-Both default 1 (stock). Built-in drivers: params at /sys/module/{rndis_host,usbnet}
-/parameters/, applied on eth1 unbind/bind.
+Defaults 8 and 8 (1 = stock). Built-in drivers: params at
+/sys/module/{rndis_host,usbnet}/parameters/, applied when the interface binds.
 --- a/drivers/net/usb/rndis_host.c	2026-09-02 23:20:25.401324000 +0000
 +++ b/drivers/net/usb/rndis_host.c	2026-09-02 23:20:25.412675750 +0000
 @@ -284,6 +284,14 @@
  	.ndo_validate_addr	= eth_validate_addr,
  };
  
-+/* RX-batching experiment: enlarge the RNDIS RX URB (and the advertised
++/* RX batching: enlarge the RNDIS RX URB (and the advertised
 + * max_transfer_size) so the modem may pack several frames per USB transfer.
 + * Pair with usbnet rx_qlen_mult to keep enough URBs in flight (bigger buffers
-+ * otherwise shrink the fixed-memory usbnet RX ring). Default 1 = stock. */
-+static unsigned int rndis_rx_urb_mult = 1;
++ * otherwise shrink the fixed-memory usbnet RX ring). 1 = stock. */
++static unsigned int rndis_rx_urb_mult = 8;
 +module_param(rndis_rx_urb_mult, uint, 0644);
-+MODULE_PARM_DESC(rndis_rx_urb_mult, "Multiply RNDIS RX URB size (1=stock)");
++MODULE_PARM_DESC(rndis_rx_urb_mult, "Multiply RNDIS RX URB size (default 8, 1=stock)");
 +
  int
  generic_rndis_bind(struct usbnet *dev, struct usb_interface *intf, int flags)
@@ -41,12 +43,12 @@ Both default 1 (stock). Built-in drivers: params at /sys/module/{rndis_host,usbn
  #define	RX_QLEN(dev)		((dev)->rx_qlen)
  #define	TX_QLEN(dev)		((dev)->tx_qlen)
  
-+/* RX-batching experiment: multiply the SuperSpeed RX queue depth so a larger
++/* RX batching: multiply the SuperSpeed RX queue depth so a larger
 + * rx_urb_size still keeps many URBs in flight (usbnet caps total ring bytes,
-+ * so a big buffer alone starves the pipe). Default 1 = stock. */
-+static unsigned int rx_qlen_mult = 1;
++ * so a big buffer alone starves the pipe). 1 = stock. */
++static unsigned int rx_qlen_mult = 8;
 +module_param(rx_qlen_mult, uint, 0644);
-+MODULE_PARM_DESC(rx_qlen_mult, "Multiply SuperSpeed RX queue depth (1=stock)");
++MODULE_PARM_DESC(rx_qlen_mult, "Multiply SuperSpeed RX queue depth (default 8, 1=stock)");
 +
  // reawaken network queue this soon after stopping; else watchdog barks
  #define TX_TIMEOUT_JIFFIES	(5*HZ)
