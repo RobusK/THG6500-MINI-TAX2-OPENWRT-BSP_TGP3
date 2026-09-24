@@ -24,8 +24,8 @@ proto_464xlat_setup() {
 	local iface="$2"
 	local link="464-$cfg"
 
-	local ip6addr ip6prefix tunlink zone
-	json_get_vars ip6addr ip6prefix tunlink zone
+	local ip6addr ip6prefix tunlink zone mtu
+	json_get_vars ip6addr ip6prefix tunlink zone mtu
 
 	[ "$zone" = "-" ] && zone=""
 
@@ -80,6 +80,16 @@ proto_464xlat_setup() {
 	proto_close_data
 
 	proto_send_update "$cfg"
+
+	# Translated packets grow by 20 bytes (IPv6 vs IPv4 header). The uplink's
+	# IPv6 MTU can be below 1500 (an RA may lower it: the FM350 advertises
+	# 1280), and the nat46 device can't go below 1280 itself without losing
+	# IPv6. So the IPv4 MTU goes on a default route preferred over netifd's
+	# (metric 2048): fw4 MSS clamping and IPv4 PMTUD use the route MTU. It goes
+	# away with the device on teardown.
+	[ -n "$mtu" ] || mtu=$(( $(cat /proc/sys/net/ipv6/conf/$tundev/mtu 2>/dev/null || echo 1500) - 20 ))
+	ip link set dev "$link" up
+	ip route replace default dev "$link" metric 2047 mtu "$mtu"
 }
 
 proto_464xlat_teardown() {
@@ -111,6 +121,7 @@ proto_464xlat_init_config() {
 	proto_config_add_string "ip6addr"
 	proto_config_add_string "tunlink"
 	proto_config_add_string "zone"
+	proto_config_add_int "mtu"
 }
 
 [ -n "$INCLUDE_ONLY" ] || {
