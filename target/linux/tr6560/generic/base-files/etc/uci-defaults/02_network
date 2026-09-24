@@ -16,7 +16,7 @@ set_network()
         set network.wwan='interface'
         set network.wwan.proto='dhcp'
 
-        set network.globals.ula_prefix=''
+        set network.globals.ula_prefix='auto'
         set network.@device[0].multicast_to_unicast='0'
 EOF
 
