@@ -1,0 +1,32 @@
+ra: solicit again before the router lifetime expires
+
+odhcp6c only sends Router Solicitations at startup and on carrier changes.
+A router that answers solicitations but never sends unsolicited RAs, like
+the FM350-GL cellular modem (router lifetime 21840 s), therefore loses its
+default route one router lifetime after the connect; odhcpd then advertises
+router lifetime 0 on the LAN. Re-arm the RS timer at half the router
+lifetime on every RA with a non-zero lifetime; routers that send periodic
+RAs push it out before it fires.
+
+--- a/src/ra.c	2022-08-01 19:27:51.000000000 +0000
++++ b/src/ra.c	2026-09-24 23:37:30.254873885 +0000
+@@ -423,9 +423,17 @@
+ 		 * Moreover, a host SHOULD send at least one solicitation in the case
+ 		 * where an advertisement is received prior to having sent a solicitation.
+ 		 */
+-		if (rs_attempt > 0 && router_valid > 0) {
+-			alarm(0);
++		if (router_valid > 0) {
+ 			rs_attempt = 0;
++			/*
++			 * Some routers answer solicitations but never send
++			 * unsolicited RAs (e.g. the Fibocom FM350-GL cellular
++			 * modem), so the default route would expire after one
++			 * router lifetime. Solicit again at half the lifetime;
++			 * a periodic RA from a normal router re-arms the timer
++			 * first. This also stops pending RS retransmissions.
++			 */
++			alarm(router_valid / 2);
+ 		}
+ 
+ 		// Parse default route
